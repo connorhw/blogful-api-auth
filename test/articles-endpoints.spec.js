@@ -1,4 +1,5 @@
 const knex = require('knex')
+const supertest = require('supertest')
 const app = require('../src/app')
 const helpers = require('./test-helpers')
 
@@ -10,6 +11,11 @@ describe('Articles Endpoints', function() {
     testArticles,
     testComments,
   } = helpers.makeArticlesFixtures()
+
+  function makeAuthHeader(user) {
+    const token = Buffer.from(`${user.user_name}:${user.password}`).toString('base64')
+    return `Basic ${token}`
+  }
 
   before('make knex instance', () => {
     db = knex({
@@ -24,6 +30,33 @@ describe('Articles Endpoints', function() {
   before('cleanup', () => helpers.cleanTables(db))
 
   afterEach('cleanup', () => helpers.cleanTables(db))
+
+  describe.only(`Protected endpoints`, () => {
+    beforeEach('insert articles', () => 
+      helpers.seedArticlesTables(
+        db,
+        testUsers,
+        testArticles,
+        testComments,
+      )
+    )
+
+    describe(`GET /api/articles/:articles_id`, () => {
+      it(`responds with 401 'Missing basic token' when no basic token`, () => {
+        return supertest(app)
+          .get(`/api/articles/123`)
+          .expect(401, { error: `Missing basic token` })
+      })
+      
+      it(`responds 401 'Unauthorized request' when no credentials in token`, () => {
+        const userNoCreds = { user_name: '', password: '' }
+        return supertest(app)
+          .get(`/api/articles/123`)
+          .set('Authorization', makeAuthHeader(userNoCreds))
+          .expect(401, { error: `Unauthorized request` })
+      })
+    })
+  })
 
   describe(`GET /api/articles`, () => {
     context(`Given no articles`, () => {
@@ -85,12 +118,13 @@ describe('Articles Endpoints', function() {
     })
   })
 
-  describe(`GET /api/articles/:article_id`, () => {
+  describe.only(`GET /api/articles/:article_id`, () => {
     context(`Given no articles`, () => {
       it(`responds with 404`, () => {
         const articleId = 123456
         return supertest(app)
           .get(`/api/articles/${articleId}`)
+          .set('Authorization', makeAuthHeader(testUsers[0]))
           .expect(404, { error: `Article doesn't exist` })
       })
     })
@@ -115,6 +149,7 @@ describe('Articles Endpoints', function() {
 
         return supertest(app)
           .get(`/api/articles/${articleId}`)
+          .set('Authorization', makeAuthHeader(testUsers[0]))
           .expect(200, expectedArticle)
       })
     })
@@ -137,6 +172,8 @@ describe('Articles Endpoints', function() {
       it('removes XSS attack content', () => {
         return supertest(app)
           .get(`/api/articles/${maliciousArticle.id}`)
+          // use the testUser seeded above
+          .set('Authorization', makeAuthHeader(testUsers))
           .expect(200)
           .expect(res => {
             expect(res.body.title).to.eql(expectedArticle.title)
